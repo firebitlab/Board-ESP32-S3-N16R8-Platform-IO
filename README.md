@@ -1,8 +1,8 @@
-# ESP32-S3 N16R8 PlatformIO Setup Guide
+# ESP32-S3 N16R8 Custom Board Setup
 
-Complete guide for setting up ESP32-S3 DevKitC-1 N16R8V board with PlatformIO, including PSRAM configuration and peripheral testing.
+Guide untuk setup ESP32-S3 DevKitC-1 N16R8V board custom dengan PlatformIO, fokus pada konfigurasi board, test PSRAM, LED, dan penyelesaian masalah serial.
 
-## Hardware Specifications
+## Hardware
 
 - **Board**: ESP32-S3 DevKitC-1 N16R8V
 - **Flash**: 16MB (QD, QIO mode)
@@ -11,26 +11,160 @@ Complete guide for setting up ESP32-S3 DevKitC-1 N16R8V board with PlatformIO, i
 - **RAM**: 320KB SRAM
 - **Connectivity**: WiFi 802.11 b/g/n, Bluetooth 5.0 LE
 
-### Peripherals
-- **LCD**: ILI9341 2.8" TFT SPI (240x320 pixels)
-- **SD Card**: SPI interface (shared with TFT)
+## Custom Board Definition
 
-## Prerequisites
+File `boards/esp32-s3-devkitc-1-n16r8v.json` mendefinisikan konfigurasi khusus:
 
-- [PlatformIO Core](https://platformio.org/install/cli) or [VS Code + PlatformIO Extension](https://platformio.org/install/ide?install=vscode)
-- USB-C cable for programming and power
-- CP210x or CH340 USB-to-Serial driver (if needed)
-
-## Quick Start
-
-### 1. Clone Repository
-
-```bash
-git clone <repository-url>
-cd vortek
+```json
+{
+  "build": {
+    "arduino": {
+      "ldscript": "esp32s3_out.ld",
+      "partitions": "default_16MB.csv",
+      "memory_type": "qio_opi"
+    },
+    "extra_flags": [
+      "-DARDUINO_ESP32S3_DEV",
+      "-DBOARD_HAS_PSRAM",
+      "-DARDUINO_USB_MODE=1",
+      "-DARDUINO_USB_CDC_ON_BOOT=0"
+    ],
+    "f_cpu": "240000000L",
+    "f_flash": "80000000L",
+    "flash_mode": "qio",
+    "psram_type": "opi"
+  }
+}
 ```
 
-### 2. Project Structure
+**Poin penting:**
+- `memory_type: "qio_opi"` - Flash QIO, PSRAM OPI
+- `ARDUINO_USB_MODE=1` - Menggunakan hardware USB
+- `ARDUINO_USB_CDC_ON_BOOT=0` - **USB CDC tidak aktif saat boot** (lihat bagian Troubleshooting)
+- `BOARD_HAS_PSRAM` - Mengaktifkan PSRAM
+
+## PlatformIO Configuration
+
+```ini
+[env]
+platform = espressif32
+board = esp32-s3-devkitc-1-n16r8v
+framework = arduino
+monitor_speed = 9600
+```
+
+## Test Environments
+
+### 1. Test PSRAM
+
+Memverifikasi bahwa 8MB PSRAM dapat dialokasikan dan diakses.
+
+```bash
+# Build dan upload
+pio run -e test_psram -t upload --upload-port COM15
+
+# Monitor serial
+pio device monitor -e test_psram --port COM15
+```
+
+**Output yang diharapkan:**
+```
+=== TEST PSRAM ===
+PSRAM Size: 8388608 bytes (8 MB)
+Allocation test: OK
+Read/write test: OK
+```
+
+### 2. Test LED Built-in
+
+Menguji LED RGB built-in pada GPIO 48.
+
+```bash
+# Build dan upload
+pio run -e test_led_builtin -t upload --upload-port COM15
+
+# Monitor serial
+pio device monitor -e test_led_builtin --port COM15
+```
+
+**Output yang diharapkan:**
+```
+=== TEST LED BUILTIN ===
+LED ON
+LED OFF
+LED ON
+...
+```
+
+### 3. Environment Lainnya
+
+| Environment | Deskripsi |
+|-------------|-----------|
+| `esp32s3` | Environment default (kosong) |
+| `test_tft` | Test TFT display (dalam pengembangan) |
+
+## Built-in LED
+
+| Fungsi | GPIO | Keterangan |
+|--------|------|------------|
+| LED | 48 | RGB LED built-in |
+
+## Serial Communication Issue
+
+### Masalah: Serial Tidak Tampil atau Garbled
+
+**Gejala:**
+- Serial monitor tidak menampilkan output program
+- Hanya menampilkan karakter garbled seperti `␒()2)!%N` atau symbol aneh
+- Output muncul tapi tidak terbaca
+
+**Penyebab:**
+ESP32-S3 menggunakan USB CDC untuk komunikasi serial. Konfigurasi berikut:
+
+```json
+"-DARDUINO_USB_CDC_ON_BOOT=0"
+```
+
+Artinya: **USB CDC tidak aktif saat boot**. Ini menyebabkan:
+1. Boot messages tidak terkirim via USB serial
+2. Hanya program output setelah inisialisasi USB CDC yang akan muncul
+3. Karakter garbled di awal adalah boot ROM messages
+
+**Solusi:**
+
+**Opsi 1: Aktifkan USB CDC on boot**
+Ubah di `boards/esp32-s3-devkitc-1-n16r8v.json`:
+```json
+"-DARDUINO_USB_CDC_ON_BOOT=1"
+```
+
+**Opsi 2: Tunggu inisialisasi USB CDC**
+Program akan mulai output setelah USB CDC diinisialisasi oleh framework Arduino.
+
+**Opsi 3: Gunakan Serial.begin() dengan benar**
+```cpp
+void setup() {
+  Serial.begin(115200);  // atau 9600 sesuai monitor_speed
+  delay(1000);           // Tunggu USB CDC ready
+  Serial.println("Program started");
+}
+```
+
+**Opsi 4: Gunakan hardware UART**
+Gunakan pin UART fisik (GPIO 43/44) untuk serial debugging.
+
+### Upload Failed: Port Busy
+
+**Masalah:** `Could not open COM15, the port is busy or doesn't exist`
+
+**Solusi:**
+1. Tutup serial monitor (Ctrl+C di terminal monitor)
+2. Jalankan upload command
+3. Buka monitor kembali setelah upload selesai
+
+## Development
+
+### Struktur Project
 
 ```
 vortek/
@@ -41,179 +175,82 @@ vortek/
 │   └── config.h                         # Pin configuration
 ├── test/
 │   ├── test_psram.cpp                   # PSRAM test
-│   ├── test_tft.cpp                     # TFT LCD test
+│   ├── test_tft.cpp                     # TFT test (dalam pengembangan)
 │   └── test_led_builtin.cpp             # LED blink test
 ├── lib/
-│   └── TFT_eSPI/                        # TFT display library
+│   └── TFT_eSPI/                        # TFT library (untuk pengembangan)
 └── platformio.ini                       # PlatformIO configuration
 ```
 
-### 3. Board Configuration
+### Menambah Environment Baru
 
-The custom board definition (`boards/esp32-s3-devkitc-1-n16r8v.json`) configures:
-- 16MB Flash with QIO mode
-- 8MB PSRAM with OPI mode
-- USB CDC for serial communication
-- 240MHz CPU frequency
-
-Key settings in `platformio.ini`:
+Tambah di `platformio.ini`:
 ```ini
-[env]
-platform = espressif32
-board = esp32-s3-devkitc-1-n16r8v
-framework = arduino
-monitor_speed = 9600
+[env:nama_env]
+build_src_filter =
+    +<../test/nama_test.cpp>
+build_flags =
+    -DFLAG_BARU=1
 ```
-
-### 4. Build and Upload
-
-```bash
-# Build default environment
-pio run
-
-# Upload to board (replace COM15 with your port)
-pio run -t upload --upload-port COM15
-
-# Open serial monitor
-pio device monitor --port COM15
-```
-
-## Test Environments
-
-The project includes three test environments to verify hardware functionality:
-
-| Environment | Description | Command |
-|-------------|-------------|---------|
-| `test_psram` | Tests 8MB PSRAM allocation and access | `pio run -e test_psram -t upload` |
-| `test_tft` | Tests ILI9341 TFT display and SD card | `pio run -e test_tft -t upload` |
-| `test_led_builtin` | Blinks built-in LED | `pio run -e test_led_builtin -t upload` |
-
-### Running Tests
-
-```bash
-# Test PSRAM
-pio run -e test_psram -t upload --upload-port COM15
-pio device monitor -e test_psram --port COM15
-
-# Test TFT Display
-pio run -e test_tft -t upload --upload-port COM15
-pio device monitor -e test_tft --port COM15
-
-# Test LED
-pio run -e test_led_builtin -t upload --upload-port COM15
-pio device monitor -e test_led_builtin --port COM15
-```
-
-## Pin Configuration
-
-### SPI Bus (Shared: TFT + SD Card)
-| Function | GPIO | Description |
-|----------|------|-------------|
-| MISO | 46 | Master In Slave Out |
-| MOSI | 45 | Master Out Slave In |
-| SCLK | 3 | SPI Clock |
-
-### TFT Display (ILI9341)
-| Function | GPIO | Description |
-|----------|------|-------------|
-| CS | 14 | Chip Select |
-| DC | 47 | Data/Command |
-| RST | 21 | Reset |
-| BL | - | Backlight (always on) |
-
-### SD Card
-| Function | GPIO | Description |
-|----------|------|-------------|
-| CS | 5 | Chip Select |
-
-### Built-in LED
-| Function | GPIO | Description |
-|----------|------|-------------|
-| LED | 48 | Built-in RGB LED |
-
-## Troubleshooting
-
-### Serial Output Shows Garbled Text
-
-**Problem**: Serial monitor displays garbled characters like `␒()2)!%N`
-
-**Solution**: ESP32-S3 uses USB CDC for serial communication by default. The garbled output is normal boot messages. Your actual program output will be readable after initialization.
-
-**Board Configuration**:
-```json
-"extra_flags": [
-    "-DARDUINO_USB_MODE=1",
-    "-DARDUINO_USB_CDC_ON_BOOT=0"
-]
-```
-
-### Upload Failed: Port Busy
-
-**Problem**: `Could not open COM15, the port is busy or doesn't exist`
-
-**Solution**: Close the serial monitor before uploading:
-1. Press `Ctrl+C` in the monitor terminal
-2. Run upload command
-3. Restart monitor after upload completes
-
-### PSRAM Not Detected
-
-**Problem**: PSRAM test fails or shows 0 bytes
-
-**Solution**: Verify board configuration:
-1. Check `boards/esp32-s3-devkitc-1-n16r8v.json` has `"psram_type": "opi"`
-2. Ensure build flag `-DBOARD_HAS_PSRAM` is set
-3. Confirm your board actually has PSRAM (N16R8V variant)
-
-### TFT Display Not Working
-
-**Problem**: Display shows nothing or crashes with `Guru Meditation Error`
-
-**Solution**: 
-1. Verify pin connections match `src/config.h`
-2. Check SPI bus initialization
-3. Confirm LCD is ILI9341 compatible
-4. Test with minimal example first
-
-**Current Status**: TFT test crashes at `tft.init()` - pin mapping verification needed.
-
-## Development
-
-### Adding New Features
-
-1. Edit `src/main.cpp` for main application
-2. Use `src/config.h` for pin definitions
-3. Add dependencies in `platformio.ini` under `lib_deps`
 
 ### Custom Build Flags
 
-Add build flags in `platformio.ini`:
 ```ini
 [env:custom]
 build_flags =
-    -DMY_CUSTOM_FLAG=1
+    -DMY_FLAG=1
     -DDEBUG_LEVEL=5
+    -DCORE_DEBUG_LEVEL=5
 ```
+
+## Troubleshooting
+
+### 1. Serial Output Kosong
+
+**Cek:**
+1. `ARDUINO_USB_CDC_ON_BOOT` setting
+2. `Serial.begin()` sudah dipanggil di `setup()`
+3. Delay 1-2 detik setelah Serial.begin() untuk USB CDC ready
+4. Monitor speed sesuai dengan `monitor_speed` di platformio.ini
+
+### 2. PSRAM Tidak Terdeteksi
+
+**Cek:**
+1. Board确实是 N16R8V variant (ada PSRAM)
+2. `boards/esp32-s3-devkitc-1-n16r8v.json` punya `"psram_type": "opi"`
+3. Build flag `-DBOARD_HAS_PSRAM` ada
+4. Test dengan program minimal PSRAM allocation
+
+### 3. Upload Gagal
+
+**Solusi:**
+1. Pastikan port COM benar
+2. Tutup semua program yang menggunakan port (termasuk serial monitor)
+3. Coba reset board manual sebelum upload
+4. Periksa driver USB (CP210x atau CH340)
+
+### 4. Program Crash
+
+**Cek:**
+1. Stack size cukup (untuk WiFi/PSRAM operations)
+2. Memory allocation tidak berlebihan
+3. Watchdog timer tidak timeout
+4. Gunakan `esp_task_wdt_feed()` jika perlu
 
 ## Resources
 
 - [ESP32-S3 Datasheet](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf)
-- [ESP32-S3 DevKitC-1 User Guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/hw-reference/esp32s3/user-guide-devkitc-1.html)
-- [PlatformIO ESP32 Platform](https://docs.platformio.org/en/latest/platforms/espressif32.html)
-- [TFT_eSPI Library](https://github.com/Bodmer/TFT_eSPI)
+- [ESP32-S3 USB CDC](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-guides/usb-serial-jtag.html)
+- [PlatformIO ESP32](https://docs.platformio.org/en/latest/platforms/espressif32.html)
+- [Arduino ESP32 Core](https://github.com/espressif/arduino-esp32)
 
 ## License
 
-This project is provided as-is for educational and development purposes.
-
-## Contributing
-
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Test your changes thoroughly
-4. Submit a pull request with clear description
+Project ini disediakan untuk tujuan edukasi dan pengembangan.
 
 ---
 
-**Note**: This is a development project. Some features (TFT display) are still under debugging. See Troubleshooting section for known issues.
+**Catatan:** 
+- LCD/TFT display sedang dalam pengembangan, belum stable
+- Serial output mungkin perlu penyesuaian tergantung konfigurasi USB CDC
+- Pastikan board确实是 ESP32-S3 N16R8V sebelum menggunakan konfigurasi PSRAM
