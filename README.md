@@ -59,6 +59,45 @@ monitor_speed = 9600
 
 Memverifikasi bahwa 8MB PSRAM dapat dialokasikan dan diakses.
 
+#### Block Diagram: ESP32-S3 & PSRAM
+
+```mermaid
+graph TB
+    subgraph ESP32-S3["ESP32-S3 N16R8V SoC"]
+        CPU["CPU<br/>Dual Xtensa LX7<br/>240 MHz"]
+        SRAM["Internal SRAM<br/>320 KB"]
+        MSPI["MSPI Controller<br/>(Memory SPI)"]
+        DMA["DMA Controller"]
+    end
+
+    subgraph External["External Memory"]
+        Flash["Flash 16MB<br/>QD, QIO Mode<br/>80 MHz"]
+        PSRAM["PSRAM 8MB<br/>OPI Mode<br/>80 MHz"]
+    end
+
+    subgraph MemoryMap["Memory Address Map"]
+        IRAM["IRAM: 0x4000_0000<br/>Instruction RAM"]
+        DRAM["DRAM: 0x3FFE_0000<br/>Data RAM"]
+        PSRAMV["PSRAM: 0x3D80_0000<br/>(mapped via MSPI)"]
+        FLASH["Flash: 0x4000_0000<br/>(mapped via MSPI)"]
+    end
+
+    CPU -->|"AXI Bus"| DMA
+    DMA -->|"SPI Bus"| MSPI
+    MSPI -->|"QIO (4-line)"| Flash
+    MSPI -->|"OPI (8-line)"| PSRAM
+    CPU --> SRAM
+    SRAM -.->|"fast access"| CPU
+    PSRAM -.->|"via MSPI mapping"| PSRAMV
+    Flash -.->|"via MSPI mapping"| FLASH
+
+    style ESP32-S3 fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
+    style External fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style MemoryMap fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style PSRAM fill:#fff9c4,stroke:#f9a825,stroke-width:2px
+    style Flash fill:#fff9c4,stroke:#f9a825,stroke-width:2px
+```
+
 ```bash
 # Build dan upload
 pio run -e test_psram -t upload --upload-port COM15
